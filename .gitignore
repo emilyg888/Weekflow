@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Runtime state
+data/cards.json
+data/events.json
+kanban.duckdb
+logs/
+exports/
+reports/
+
+# Backlog runtime artifacts (keep dirs via .gitkeep)
+backlog/raw/*
+!backlog/raw/.gitkeep
+backlog/processed/*
+!backlog/processed/.gitkeep
+backlog/ai_generated/*
+!backlog/ai_generated/.gitkeep
