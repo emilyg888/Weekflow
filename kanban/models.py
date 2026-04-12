@@ -48,6 +48,7 @@ def now_iso() -> str:
 class Card:
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     title: str = ""
+    notes: str = ""
     lane: str = "deep"
     col: str = "ready"
     tag: str = "Architecture"
@@ -55,8 +56,6 @@ class Card:
     ai_generated: bool = False
     created_at: str = field(default_factory=now_iso)
     updated_at: str = field(default_factory=now_iso)
-    scheduled_at: Optional[str] = None
-    calendar_event_id: Optional[str] = None
     archived: bool = False
 
     def to_dict(self) -> dict:
