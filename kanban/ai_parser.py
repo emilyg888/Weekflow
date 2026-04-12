@@ -5,7 +5,7 @@ card candidates, writes:
   - /backlog/processed/task_candidates.json  — staging queue (flat list)
   - /backlog/ai_generated/tasks_YYYY-MM-DD.json — per-day snapshot
 
-Defaults to a local Ollama server and falls back to a deterministic heuristic
+Defaults to LM Studio's local OpenAI-compatible server and falls back to a deterministic heuristic
 extractor if the OpenAI SDK is unavailable or the LLM request fails.
 
 .mp3 (Whisper) and .png (vision) inputs are mentioned in the spec; implement
@@ -29,9 +29,9 @@ RAW_DIR = BACKLOG_DIR / "raw"
 PROCESSED_DIR = BACKLOG_DIR / "processed"
 AI_DIR = BACKLOG_DIR / "ai_generated"
 STAGING_FILE = PROCESSED_DIR / "task_candidates.json"
-DEFAULT_LLM_BASE_URL = "http://127.0.0.1:11434/v1"
-DEFAULT_LLM_MODEL = "qwen2.5:14b"
-DEFAULT_LLM_API_KEY = "ollama"
+DEFAULT_LLM_BASE_URL = "http://127.0.0.1:1234/v1"
+DEFAULT_LLM_MODEL = "Qwen/Qwen2.5-14B-Instruct"
+DEFAULT_LLM_API_KEY = "lm-studio"
 DEFAULT_LLM_TIMEOUT = 30.0
 
 SYSTEM_PROMPT = """You convert free-form backlog notes into structured kanban cards.
