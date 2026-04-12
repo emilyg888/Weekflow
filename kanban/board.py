@@ -130,26 +130,6 @@ def _col_totals(cards: list[Card]) -> Counter:
     return Counter(c.col for c in cards)
 
 
-def _pill_state(col: str, count: int) -> str:
-    """Return 'ok' | 'warn' | 'over' | 'none' based on count vs cap (UI-5)."""
-    limit = COL_LIMITS[col]
-    if limit is None:
-        return "none"
-    if count > limit:
-        return "over"
-    if count == limit:
-        return "warn"
-    return "ok"
-
-
-def _wip_pill_html(col: str, count: int) -> str:
-    """Render the WIP pill for a column header (UI-5)."""
-    limit = COL_LIMITS[col]
-    if limit is None:
-        return f'<span class="wf-pill ok">{count}</span>'
-    state = _pill_state(col, count)
-    return f'<span class="wf-pill {state}">{count}/{limit}</span>'
-
 
 def _validate_move(to_col: str, current_totals: Counter) -> tuple[bool, str]:
     """Spec §2.2: hard block at limit+1, amber at limit-1, red at limit."""
@@ -162,488 +142,179 @@ def _validate_move(to_col: str, current_totals: Counter) -> tuple[bool, str]:
     return True, ""
 
 
-# --- Rendering (v2 — light theme, horizontal grid per UI-1 … UI-7) -------
+# --- Rendering (horizontal flex grid per lane) ----------------------------
 
-# Palette — warm dark theme
-_PAGE_BG = "#1C1B19"
-_BOARD_BG = "#1C1B19"
-_COL_BG = "#201E1C"
-_CARD_BG = "#26241F"
-_HEADER_BG = "#26241F"
-_BORDER = "#38362F"
-_BORDER_HOVER = "#6B6557"
-_TEXT_PRIMARY = "#F2F1ED"
-_TEXT_MUTED = "#8B8A80"
-
-# Lane accent colours — brighter variants for dark bg
-_LANE_COLORS: dict[str, str] = {
-    "deep":   "#7B6FE0",
-    "growth": "#4FC18E",
-    "health": "#4A9BE0",
-    "admin":  "#E67E47",
+CUSTOM_CSS = """
+.sortable-component {
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 10px;
+    align-items: stretch;
 }
-
-# WIP pill colours — dark mode
-_PILL_CSS = {
-    "ok":   ("#1F3220", "#8FC97B"),
-    "warn": ("#3A2D10", "#E8B85C"),
-    "over": ("#3A1515", "#E77766"),
+.sortable-container {
+    background: var(--secondary-background-color, #f6f7f9);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 8px;
+    padding: 8px;
+    min-height: 90px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
 }
-
-# Global page CSS (UI-2, UI-7). Injected once per render via st.markdown.
-_PAGE_CSS = f"""<style>
-:root {{
-  --bg-page: {_PAGE_BG};
-  --bg-board: {_BOARD_BG};
-  --bg-col: {_COL_BG};
-  --bg-card: {_CARD_BG};
-  --bg-header: {_HEADER_BG};
-  --border: {_BORDER};
-  --border-hover: {_BORDER_HOVER};
-  --text-primary: {_TEXT_PRIMARY};
-  --text-muted: {_TEXT_MUTED};
-}}
-.stApp, [data-testid="stAppViewContainer"], section[data-testid="stMain"],
-[data-testid="stHeader"], [data-testid="stSidebar"] {{
-  background: var(--bg-page) !important;
-  color: var(--text-primary) !important;
-}}
-[data-testid="stSidebar"] {{
-  border-right: 1px solid var(--border);
-}}
-/* Buttons, inputs and text adopt the dark palette */
-.stButton > button:not([disabled]) {{
-  background: #26241F !important;
-  color: var(--text-primary) !important;
-  border: 1px solid var(--border) !important;
-  cursor: pointer !important;
-  opacity: 1 !important;
-}}
-.stButton > button:not([disabled]):hover {{
-  border-color: {_BORDER_HOVER} !important;
-  background: #2C2923 !important;
-}}
-.stButton > button:not([disabled]):focus {{
-  box-shadow: 0 0 0 1px {_BORDER_HOVER} !important;
-}}
-.stButton > button[disabled] {{
-  background: #26241F !important;
-  color: var(--text-muted) !important;
-  border: 1px solid var(--border) !important;
-  opacity: 0.45 !important;
-  cursor: not-allowed !important;
-}}
-.stTextInput > div > div > input,
-.stSelectbox [data-baseweb="select"] > div,
-.stNumberInput input,
-.stDateInput input,
-.stTimeInput input {{
-  background: #26241F !important;
-  color: var(--text-primary) !important;
-  border-color: var(--border) !important;
-}}
-p, span, li, label, .stMarkdown, .stMarkdown p {{
-  color: var(--text-primary);
-}}
-.main .block-container {{
-  padding-top: 1rem;
-  max-width: 100% !important;
-}}
-/* Typography (UI-7, scaled up per user preference) */
-h1 {{
-  font-size: 28px !important;
-  font-weight: 600 !important;
-  color: var(--text-primary) !important;
-  margin: 0 0 4px 0 !important;
-  padding: 0 !important;
-}}
-h2, h3 {{
-  color: var(--text-primary) !important;
-}}
-[data-testid="stCaptionContainer"] {{
-  color: var(--text-muted) !important;
-  font-size: 12px !important;
-}}
-/* Row-gap tightening so lanes don't feel airy */
-[data-testid="stHorizontalBlock"] {{
-  gap: 6px !important;
-  align-items: stretch !important;
-}}
-[data-testid="stVerticalBlock"] > div {{
-  gap: 0.25rem;
-}}
-
-/* Column header bar (UI-1 sticky + UI-5 pills) */
-.wf-col-headers {{
-  position: sticky;
-  top: 2.8rem;
-  z-index: 50;
-  background: var(--bg-header);
-  border: 1.5px solid var(--border);
-  border-radius: 6px;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
-  margin: 2px 0 8px 0;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.4);
-  overflow: hidden;
-}}
-.wf-col-head {{
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  min-width: 0;
-  border-right: 1px solid rgba(255,255,255,0.06);
-}}
-.wf-col-head:last-child {{ border-right: none; }}
-.wf-col-head.warn {{ box-shadow: inset 0 0 0 1.5px #8A6420; }}
-.wf-col-head.over {{ box-shadow: inset 0 0 0 1.5px #A84040; }}
-.wf-col-title {{
-  display: flex; flex-direction: column;
-  min-width: 0;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-primary);
-  line-height: 1.2;
-}}
-.wf-col-sub {{
-  font-size: 11px;
-  text-transform: none;
-  letter-spacing: 0;
-  color: var(--text-muted);
-  font-weight: 400;
-}}
-.wf-pill {{
-  font-size: 12px;
-  font-weight: 600;
-  padding: 3px 9px;
-  border-radius: 10px;
-  border: 1px solid rgba(255,255,255,0.06);
-}}
-.wf-pill.ok   {{ background: {_PILL_CSS['ok'][0]};   color: {_PILL_CSS['ok'][1]}; }}
-.wf-pill.warn {{ background: {_PILL_CSS['warn'][0]}; color: {_PILL_CSS['warn'][1]}; }}
-.wf-pill.over {{ background: {_PILL_CSS['over'][0]}; color: {_PILL_CSS['over'][1]}; }}
-
-/* Lane label cell (UI-1 right label column, UI-3 dot) */
-.wf-lane-label {{
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-direction: row-reverse;
-  gap: 8px;
-  padding: 8px 10px 8px 4px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  min-height: 84px;
-  text-align: right;
-  border-right: 4px solid transparent;
-}}
-.wf-lane-dot {{
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}}
-
-/* Week badge (UI-7) */
-.wf-week-badge {{
-  display: inline-block;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--text-muted);
-  background: var(--bg-col);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 2px 10px;
-  margin-left: 8px;
-}}
-</style>
+.sortable-container-header {
+    font-weight: 600;
+    font-size: 0.82rem;
+    padding: 4px 6px 6px;
+    color: var(--text-color, #24292e);
+    opacity: 0.7;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    flex-shrink: 0;
+}
+.sortable-container-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 40px;
+}
+.sortable-item {
+    background: var(--background-color, white);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin: 3px 0;
+    font-size: 0.85rem;
+    cursor: grab;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+    color: var(--text-color, #24292e);
+}
+.sortable-item:hover {
+    border-color: var(--primary-color, #0969da);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+}
 """
 
 
-def _sortable_css(lane_color: str) -> str:
-    """CSS passed into the streamlit-sortables iframe. Scoped per lane so each
-    lane's cards get the correct accent stripe (UI-3).
-    """
-    return f"""
-* {{ box-sizing: border-box; }}
-body {{ background: {_BOARD_BG}; margin: 0; padding: 0; }}
-.sortable-component {{
-  display: grid !important;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 6px;
-  padding: 0;
-  align-items: stretch;
-}}
-.sortable-container {{
-  background: {_COL_BG};
-  border: 1.5px solid {_BORDER};
-  border-radius: 6px;
-  padding: 6px;
-  min-height: 132px;
-  display: flex;
-}}
-/* Header is rendered outside the iframe, hide the duplicate inside */
-.sortable-container-header {{ display: none; }}
-.sortable-container-body {{
-  padding: 0;
-  min-height: 100%;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  flex: 1 1 auto;
-}}
-ul {{
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  width: 100%;
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  flex: 1 1 auto;
-}}
-
-.sortable-item {{
-  background: {_CARD_BG};
-  border: 1.5px solid {_BORDER};
-  border-left: 4px solid {lane_color};
-  border-radius: 8px;
-  padding: 6px;
-  width: 64px;
-  min-height: 64px;
-  aspect-ratio: 1 / 1;
-  margin: 0 0 6px 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: {_TEXT_PRIMARY};
-  line-height: 1.1;
-  white-space: pre-line;
-  word-break: break-word;
-  overflow: hidden;
-  cursor: grab;
-  list-style: none;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.35);
-  transition: border-color 120ms ease, box-shadow 120ms ease;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-}}
-.sortable-item:last-child {{ margin-bottom: 0; }}
-.sortable-item:hover {{
-  border-color: {_BORDER_HOVER};
-  border-left-color: {lane_color};
-  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
-}}
-.sortable-item.dragging {{ opacity: 0.35; border-style: dashed; cursor: grabbing; }}
-
-/* Done column (4th container) — dim per UI-4 */
-.sortable-container:nth-child(4) .sortable-item {{
-  opacity: 0.55;
-}}
-"""
+def _wip_pill(col: str, count: int) -> str:
+    limit = COL_LIMITS[col]
+    if limit is None:
+        return f"{count}"
+    if count >= limit:
+        dot = "🔴"
+    elif count >= limit - 1 and limit >= 2:
+        dot = "🟠"
+    else:
+        dot = "🟢"
+    return f"{dot} {count}/{limit}"
 
 
-def _render_column_headers(totals: Counter) -> None:
-    """Sticky column-header bar with WIP pills (UI-1, UI-5). Sits above the
-    lane rows and spans the same width as the sortable area.
-    """
-    cells: list[str] = []
-    for col_id in COL_IDS:
-        limit = COL_LIMITS[col_id]
-        state = _pill_state(col_id, totals[col_id])
-        head_class = "wf-col-head" + (" warn" if state == "warn" else "" if state != "over" else " over")
-        if state == "over":
-            head_class = "wf-col-head over"
-        sub = (
-            f"max {limit}" if limit is not None
-            else "resets Sun"
-        )
-        cells.append(
-            f'<div class="{head_class}">'
-            f'<div class="wf-col-title">{COL_LABELS[col_id]}'
-            f'<span class="wf-col-sub">{sub}</span></div>'
-            f'{_wip_pill_html(col_id, totals[col_id])}'
-            f'</div>'
-        )
-    st.markdown(
-        '<div class="wf-col-headers">' + "".join(cells) + '</div>',
-        unsafe_allow_html=True,
-    )
-
-
-def _render_lane_label(lane_id: str) -> None:
-    color = _LANE_COLORS[lane_id]
-    st.markdown(
-        f'<div class="wf-lane-label" style="border-right-color:{color}">'
-        f'<span class="wf-lane-dot" style="background:{color}"></span>'
-        f'{LANE_LABELS[lane_id]}'
-        f'</div>',
-        unsafe_allow_html=True,
-    )
-
-
-def _render_inline_add_form(lane_id: str) -> None:
-    """UI-6 inline add-card form, scoped to a single lane's Ready cell.
-    Stored open/closed in session state so the form only appears for the
-    lane whose '+ add' was clicked.
-    """
-    state_key = f"wf_add_open_{lane_id}"
-    if not st.session_state.get(state_key):
-        if st.button(
-            "Add Card",
-            key=f"wf_add_btn_{lane_id}",
-            help="Create a new card in this lane's Ready column",
-            use_container_width=True,
-        ):
-            st.session_state[state_key] = True
-            st.rerun()
-        return
-
-    with st.form(f"wf_add_form_{lane_id}", clear_on_submit=True, border=True):
-        title = st.text_input(
-            "Title",
-            max_chars=80,
-            placeholder=f"New {LANE_LABELS[lane_id]} card",
-            label_visibility="collapsed",
-            key=f"wf_add_title_{lane_id}",
-        )
-        fc1, fc2 = st.columns([1, 1])
-        tag = fc1.selectbox(
-            "Tag", TAGS, label_visibility="collapsed", key=f"wf_add_tag_{lane_id}"
-        )
-        effort = fc2.selectbox(
-            "Effort", EFFORTS, label_visibility="collapsed", key=f"wf_add_effort_{lane_id}"
-        )
-        bc1, bc2 = st.columns([1, 1])
-        submit = bc1.form_submit_button("Add card", use_container_width=True)
-        cancel = bc2.form_submit_button("Cancel", use_container_width=True)
-        if cancel:
-            st.session_state[state_key] = False
-            st.rerun()
-        if submit:
-            if not title.strip():
-                st.warning("Title required.")
-                return
-            totals = _col_totals(storage.load_cards())
-            ok, msg = _validate_move("ready", totals)
-            if not ok:
-                st.error(msg)
-                return
-            card = Card(
-                title=title.strip(),
-                lane=lane_id,  # pre-selected from the lane that was clicked
-                col="ready",
-                tag=tag,
-                effort=effort,
+def render_add_card_form() -> None:
+    with st.expander("➕ Add card", expanded=False):
+        with st.form("add_card", clear_on_submit=True):
+            c1, c2, c3, c4 = st.columns([3, 1.2, 1, 1])
+            title = c1.text_input("Title", max_chars=80, label_visibility="collapsed", placeholder="Card title")
+            lane = c2.selectbox(
+                "Lane",
+                LANE_IDS,
+                format_func=lambda x: LANE_LABELS[x],
+                label_visibility="collapsed",
             )
-            storage.add_card(card)
-            st.session_state[state_key] = False
-            st.rerun()
-
-
-def _open_card(card_id: str) -> None:
-    st.session_state["card_manager_select"] = card_id
+            tag = c3.selectbox("Tag", TAGS, label_visibility="collapsed")
+            effort = c4.selectbox("Effort", EFFORTS, label_visibility="collapsed")
+            submitted = st.form_submit_button("Add to Ready", use_container_width=True)
+            if submitted:
+                if not title.strip():
+                    st.warning("Title required.")
+                    return
+                cards = storage.load_cards()
+                totals = _col_totals(cards)
+                ok, msg = _validate_move("ready", totals)
+                if not ok:
+                    st.error(msg)
+                    return
+                card = Card(title=title.strip(), lane=lane, col="ready", tag=tag, effort=effort)
+                storage.add_card(card)
+                st.success(f"Added '{card.title}'")
+                st.rerun()
 
 
 def render_board() -> None:
-    """Horizontal grid board: sticky column headers + 4 swimlane rows.
-
-    Layout is achieved with Streamlit's native columns (`[1, 10]`) for the
-    lane-label × card-cells split, and a sticky HTML header bar above. The
-    card cells themselves come from streamlit-sortables, styled with a CSS
-    grid so the 4 columns align with the header bar.
-    """
-    # Always-present CSS (cheap; Streamlit dedupes)
-    st.markdown(_PAGE_CSS, unsafe_allow_html=True)
-
     cards = storage.load_cards()
     totals = _col_totals(cards)
 
-    # Header row: 4-col header strip on the left, empty label cell on the right
-    head_cols, head_label = st.columns([10, 1])
-    with head_cols:
-        _render_column_headers(totals)
-    with head_label:
-        st.markdown("&nbsp;", unsafe_allow_html=True)
+    # Global WIP summary across all lanes.
+    summary_cols = st.columns(len(COL_IDS))
+    for i, col_id in enumerate(COL_IDS):
+        summary_cols[i].metric(
+            label=COL_LABELS[col_id],
+            value=_wip_pill(col_id, totals[col_id]),
+        )
 
-    # One row per lane
+    st.divider()
+
+    # Render each lane as its own horizontal sortable row.
     for lane_id in LANE_IDS:
-        board_col, label_col = st.columns([10, 1])
-        with board_col:
-            lane_cards = [c for c in cards if c.lane == lane_id]
-            id_lookup: dict[str, str] = {c.id[:8]: c.id for c in lane_cards}
+        st.subheader(LANE_LABELS[lane_id])
+        lane_cards = [c for c in cards if c.lane == lane_id]
+        id_lookup: dict[str, str] = {c.id[:8]: c.id for c in lane_cards}
 
-            buckets_map: dict[str, list[str]] = {COL_LABELS[cid]: [] for cid in COL_IDS}
-            for c in lane_cards:
-                buckets_map[COL_LABELS[c.col]].append(_encode(c))
-            buckets = [
-                {"header": COL_LABELS[cid], "items": buckets_map[COL_LABELS[cid]]}
-                for cid in COL_IDS
-            ]
+        buckets_map: dict[str, list[str]] = {COL_LABELS[cid]: [] for cid in COL_IDS}
+        for c in lane_cards:
+            buckets_map[COL_LABELS[c.col]].append(_encode(c))
+        buckets = [
+            {"header": COL_LABELS[cid], "items": buckets_map[COL_LABELS[cid]]}
+            for cid in COL_IDS
+        ]
 
-            result = sort_items(
-                buckets,
-                multi_containers=True,
-                direction="horizontal",
-                custom_style=_sortable_css(_LANE_COLORS[lane_id]),
-                key=_lane_widget_key(lane_id, lane_cards),
-            )
+        result = sort_items(
+            buckets,
+            multi_containers=True,
+            direction="horizontal",
+            custom_style=CUSTOM_CSS,
+            key=_lane_widget_key(lane_id, lane_cards),
+        )
 
-            # Detect moves within this lane and persist.
-            label_to_col = {COL_LABELS[cid]: cid for cid in COL_IDS}
-            moves: list[tuple[str, str]] = []
-            for bucket in result:
-                new_col = label_to_col[bucket["header"]]
-                for encoded in bucket["items"]:
-                    cid = _decode_id(encoded, id_lookup)
-                    if cid is None:
-                        continue
-                    card = next((c for c in lane_cards if c.id == cid), None)
-                    if card is None:
-                        continue
-                    if card.col != new_col:
-                        moves.append((cid, new_col))
+        # Detect moves within this lane and persist.
+        label_to_col = {COL_LABELS[cid]: cid for cid in COL_IDS}
+        moves: list[tuple[str, str]] = []
+        for bucket in result:
+            new_col = label_to_col[bucket["header"]]
+            for encoded in bucket["items"]:
+                cid = _decode_id(encoded, id_lookup)
+                if cid is None:
+                    continue
+                card = next((c for c in lane_cards if c.id == cid), None)
+                if card is None:
+                    continue
+                if card.col != new_col:
+                    moves.append((cid, new_col))
 
-            if moves:
-                live_totals = _col_totals(storage.load_cards())
-                blocked: list[str] = []
-                for cid, new_col in moves:
-                    card = storage.get_card(cid)
-                    if card is None:
-                        continue
-                    live_totals[card.col] -= 1
-                    ok, msg = _validate_move(new_col, live_totals)
-                    if not ok:
-                        live_totals[card.col] += 1
-                        blocked.append(f"'{card.title}': {msg}")
-                        continue
-                    prev_col = card.col
-                    storage.move_card(cid, new_col, lane_id)
-                    live_totals[new_col] += 1
-                    if prev_col == "ready" and new_col == "done":
-                        discord.post(
-                            "done-log",
-                            f"✅ **{card.title}** · {LANE_LABELS[lane_id]} · {card.effort or 'no effort'}",
-                        )
-                if blocked:
-                    for b in blocked:
-                        st.toast(b, icon="🚫")
-                st.rerun()
-
-        with label_col:
-            _render_lane_label(lane_id)
-            _render_inline_add_form(lane_id)
+        if moves:
+            live_totals = _col_totals(storage.load_cards())
+            blocked: list[str] = []
+            for cid, new_col in moves:
+                card = storage.get_card(cid)
+                if card is None:
+                    continue
+                live_totals[card.col] -= 1
+                ok, msg = _validate_move(new_col, live_totals)
+                if not ok:
+                    live_totals[card.col] += 1
+                    blocked.append(f"'{card.title}': {msg}")
+                    continue
+                prev_col = card.col
+                storage.move_card(cid, new_col, lane_id)
+                live_totals[new_col] += 1
+                if prev_col == "ready" and new_col == "done":
+                    discord.post(
+                        "done-log",
+                        f"✅ **{card.title}** · {LANE_LABELS[lane_id]} · {card.effort or 'no effort'}",
+                    )
+            if blocked:
+                for b in blocked:
+                    st.toast(b, icon="🚫")
+            st.rerun()
 
 
 # --- Card management (edit / delete / detail) -----------------------------

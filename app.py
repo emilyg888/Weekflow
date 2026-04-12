@@ -13,6 +13,7 @@ import contextlib
 
 from kanban import storage
 from kanban.board import (
+    render_add_card_form,
     render_board,
     render_card_manager,
     render_staging_view,
@@ -84,6 +85,7 @@ def main() -> None:
         ["🗂 Board", "✏️ Cards", "🤖 AI Staging", "⚙️ Operations"]
     )
     with tab_board:
+        render_add_card_form()
         render_board()
     with tab_cards:
         st.subheader("Card detail & edit")
