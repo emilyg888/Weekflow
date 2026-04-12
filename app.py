@@ -34,30 +34,27 @@ def _run_capture(fn) -> tuple[int, str]:
     return code, buf.getvalue()
 
 
-def render_sidebar() -> None:
-    st.sidebar.header("Operations")
-    st.sidebar.caption("Manual triggers for the weekly + safety nets.")
+def render_operations() -> None:
+    st.caption("Manual triggers for the weekly + safety nets.")
 
-    if st.sidebar.button("🌅 Run Sunday reset", use_container_width=True):
+    c1, c2, _ = st.columns([1, 1, 2])
+    if c1.button("🌅 Run Sunday reset", use_container_width=True):
         from scripts.sunday_reset import main as sunday_main
         with st.spinner("Archiving Done · parsing backlog · writing reflect report…"):
             code, log = _run_capture(sunday_main)
-        (st.sidebar.success if code == 0 else st.sidebar.error)(
+        (st.success if code == 0 else st.error)(
             f"sunday_reset exited {code}"
         )
-        st.sidebar.code(log or "(no output)", language="text")
+        st.code(log or "(no output)", language="text")
 
-    if st.sidebar.button("⏰ Check stale WIP", use_container_width=True):
+    if c2.button("⏰ Check stale WIP", use_container_width=True):
         from scripts.stale_wip_check import main as stale_main
         with st.spinner("Scanning WIP cards…"):
             code, log = _run_capture(stale_main)
-        (st.sidebar.success if code == 0 else st.sidebar.error)(
+        (st.success if code == 0 else st.error)(
             f"stale_wip_check exited {code}"
         )
-        st.sidebar.code(log or "(no output)", language="text")
-
-    st.sidebar.divider()
-    st.sidebar.caption(f"Today · {_dt.date.today().isoformat()}")
+        st.code(log or "(no output)", language="text")
 
 
 def main() -> None:
@@ -65,10 +62,8 @@ def main() -> None:
     storage.init_storage()
     st.title("Weekflow")
     st.caption("Capture → shape → execute → reflect → improve.")
-    render_sidebar()
-
-    tab_board, tab_cards, tab_staging = st.tabs(
-        ["🗂 Board", "✏️ Cards", "🤖 AI Staging"]
+    tab_board, tab_cards, tab_staging, tab_ops = st.tabs(
+        ["🗂 Board", "✏️ Cards", "🤖 AI Staging", "⚙️ Operations"]
     )
     with tab_board:
         render_add_card_form()
@@ -77,6 +72,8 @@ def main() -> None:
         render_card_manager()
     with tab_staging:
         render_staging_view()
+    with tab_ops:
+        render_operations()
 
 
 if __name__ == "__main__":

@@ -80,34 +80,52 @@ def _validate_move(to_col: str, current_totals: Counter) -> tuple[bool, str]:
 
 CUSTOM_CSS = """
 .sortable-component {
-    gap: 8px;
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 10px;
+    align-items: stretch;
 }
 .sortable-container {
-    background: #f6f7f9;
-    border: 1px solid #e1e4e8;
+    background: var(--secondary-background-color, #f6f7f9);
+    border: 1px solid rgba(255,255,255,0.1);
     border-radius: 8px;
-    padding: 6px;
-    min-height: 80px;
+    padding: 8px;
+    min-height: 90px;
     flex: 1;
+    display: flex;
+    flex-direction: column;
 }
 .sortable-container-header {
     font-weight: 600;
-    font-size: 0.85rem;
-    padding: 4px 6px;
-    color: #24292e;
+    font-size: 0.82rem;
+    padding: 4px 6px 6px;
+    color: var(--text-color, #24292e);
+    opacity: 0.7;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    flex-shrink: 0;
+}
+.sortable-container-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-height: 40px;
 }
 .sortable-item {
-    background: white;
-    border: 1px solid #d0d7de;
+    background: var(--background-color, white);
+    border: 1px solid rgba(255,255,255,0.15);
     border-radius: 6px;
     padding: 8px 10px;
-    margin: 4px 0;
+    margin: 3px 0;
     font-size: 0.85rem;
     cursor: grab;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+    color: var(--text-color, #24292e);
 }
 .sortable-item:hover {
-    border-color: #0969da;
+    border-color: var(--primary-color, #0969da);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
 }
 """
 
