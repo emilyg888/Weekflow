@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "weekflow",
+      "runtimeExecutable": "/Users/emilygao/LocalDocuments/Projects/Weekflow/.venv/bin/streamlit",
+      "runtimeArgs": [
+        "run",
+        "app.py",
+        "--server.headless",
+        "true",
+        "--browser.gatherUsageStats",
+        "false"
+      ],
+      "port": 8501
+    }
+  ]
+}
