@@ -50,6 +50,7 @@ def _connect() -> duckdb.DuckDBPyConnection:
         CREATE TABLE IF NOT EXISTS cards (
             id                 VARCHAR PRIMARY KEY,
             title              VARCHAR,
+            notes              VARCHAR,
             lane               VARCHAR,
             col                VARCHAR,
             tag                VARCHAR,
@@ -57,12 +58,10 @@ def _connect() -> duckdb.DuckDBPyConnection:
             ai_generated       BOOLEAN,
             created_at         VARCHAR,
             updated_at         VARCHAR,
-            scheduled_at       VARCHAR,
-            calendar_event_id  VARCHAR,
             archived           BOOLEAN
         );
         -- Forward-compat: add column if an older DB is open.
-        ALTER TABLE cards ADD COLUMN IF NOT EXISTS calendar_event_id VARCHAR;
+        ALTER TABLE cards ADD COLUMN IF NOT EXISTS notes VARCHAR;
         """
     )
     con.execute(
@@ -157,23 +156,33 @@ def load_cards() -> list[Card]:
 def _upsert_card_row(con: duckdb.DuckDBPyConnection, card: Card) -> None:
     con.execute(
         """
-        INSERT INTO cards VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO cards (
+            id,
+            title,
+            notes,
+            lane,
+            col,
+            tag,
+            effort,
+            ai_generated,
+            created_at,
+            updated_at,
+            archived
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT (id) DO UPDATE SET
             title=excluded.title,
+            notes=excluded.notes,
             lane=excluded.lane,
             col=excluded.col,
             tag=excluded.tag,
             effort=excluded.effort,
             ai_generated=excluded.ai_generated,
             updated_at=excluded.updated_at,
-            scheduled_at=excluded.scheduled_at,
-            calendar_event_id=excluded.calendar_event_id,
             archived=excluded.archived
         """,
         [
-            card.id, card.title, card.lane, card.col, card.tag, card.effort,
-            card.ai_generated, card.created_at, card.updated_at,
-            card.scheduled_at, card.calendar_event_id, card.archived,
+            card.id, card.title, card.notes, card.lane, card.col, card.tag, card.effort,
+            card.ai_generated, card.created_at, card.updated_at, card.archived,
         ],
     )
 

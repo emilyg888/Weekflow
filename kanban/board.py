@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
+import os
+import re
+from pathlib import Path
 from typing import Optional
 
 import streamlit as st
 from streamlit_sortables import sort_items
 
-from . import ai_parser, calendar_sync, discord, storage
+from . import ai_parser, discord, storage
 from .models import (
     COL_IDS,
     COL_LABELS,
@@ -21,26 +25,103 @@ from .models import (
 
 # --- Item serialization ----------------------------------------------------
 # streamlit-sortables operates on plain strings. We encode card IDs as a
-# trailing marker so we can recover identity after a drag.
-_SEP = "  ⟨"
-_END = "⟩"
+# trailing invisible marker so we can recover identity after a drag without
+# showing the short card id on the tile.
+_SEP = "\u2063"
+_END = "\u2064"
+_BIT_ZERO = "\u200b"
+_BIT_ONE = "\u200c"
+_DEFAULT_BACKLOG_PATH = "/Users/emilygao/Documents/Weekflow_Backlogs"
+
+
+def _hide_short_id(short: str) -> str:
+    bits = "".join(f"{int(ch, 16):04b}" for ch in short)
+    return "".join(_BIT_ONE if bit == "1" else _BIT_ZERO for bit in bits)
+
+
+def _reveal_short_id(hidden: str) -> Optional[str]:
+    bits = "".join("1" if ch == _BIT_ONE else "0" for ch in hidden if ch in {_BIT_ZERO, _BIT_ONE})
+    if len(bits) != 32:
+        return None
+    try:
+        return "".join(f"{int(bits[i:i + 4], 2):x}" for i in range(0, 32, 4))
+    except ValueError:
+        return None
 
 
 def _encode(card: Card) -> str:
     short = card.id[:8]
-    prefix = "★ " if card.ai_generated else ""
-    suffix = " 📅" if card.scheduled_at else ""
     title = card.title or "(untitled)"
+    label = title
     if card.effort:
-        title += f"  · {card.effort}"
-    return f"{prefix}{title}{suffix}{_SEP}{short}{_END}"
+        label = f"{title}\n{card.effort}"
+    return f"{label}{_SEP}{_hide_short_id(short)}{_END}"
 
 
 def _decode_id(encoded: str, id_lookup: dict[str, str]) -> Optional[str]:
     if _SEP not in encoded:
         return None
-    short = encoded.rsplit(_SEP, 1)[1].rstrip(_END)
+    hidden = encoded.rsplit(_SEP, 1)[1].rstrip(_END)
+    short = _reveal_short_id(hidden)
+    if short is None:
+        return None
     return id_lookup.get(short)
+
+
+def _lane_widget_key(lane_id: str, lane_cards: list[Card]) -> str:
+    """Force the sortable widget to refresh when cards change outside DnD.
+
+    The sortable component keeps internal state by `key`. When a card is
+    reassigned via the editor, a static per-lane key can leave the row showing
+    stale cards until a full page reload. Include a digest of the lane's card
+    state so external edits invalidate the cached widget state.
+    """
+    parts = [
+        "|".join(
+            [
+                c.id,
+                c.title,
+                c.lane,
+                c.col,
+                c.tag,
+                c.effort,
+                c.updated_at,
+                "1" if c.ai_generated else "0",
+            ]
+        )
+        for c in lane_cards
+    ]
+    digest = hashlib.sha1("||".join(parts).encode("utf-8")).hexdigest()[:12]
+    return f"wf_sortable_{lane_id}_{digest}"
+
+
+def _normalize_lookup(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def _matching_backlog_note(card: Card) -> Optional[Path]:
+    backlog_path = Path(os.environ.get("WEEKFLOW_BACKLOG_PATH", _DEFAULT_BACKLOG_PATH)).expanduser()
+    if not backlog_path.exists():
+        return None
+    target = _normalize_lookup(card.title)
+    for path in sorted(backlog_path.iterdir()):
+        if not path.is_file() or path.suffix.lower() not in (".md", ".txt", ".json"):
+            continue
+        if _normalize_lookup(path.stem) == target:
+            return path
+    return None
+
+
+def _card_notes(card: Card) -> tuple[str, Optional[str]]:
+    if card.notes.strip():
+        return card.notes.strip(), None
+    source = _matching_backlog_note(card)
+    if source is None:
+        return "", None
+    try:
+        return source.read_text(encoding="utf-8").strip(), source.name
+    except (OSError, UnicodeDecodeError):
+        return "", source.name
 
 
 # --- WIP helpers -----------------------------------------------------------
@@ -48,21 +129,6 @@ def _decode_id(encoded: str, id_lookup: dict[str, str]) -> Optional[str]:
 def _col_totals(cards: list[Card]) -> Counter:
     return Counter(c.col for c in cards)
 
-
-def _wip_pill(col: str, count: int) -> str:
-    limit = COL_LIMITS[col]
-    if limit is None:
-        return f"{count}"
-    # Color hint is emoji since Streamlit markdown is limited in containers.
-    if count >= limit + 1:
-        dot = "🔴"
-    elif count >= limit:
-        dot = "🔴"
-    elif count >= limit - 1 and limit >= 2:
-        dot = "🟠"
-    else:
-        dot = "🟢"
-    return f"{dot} {count}/{limit}"
 
 
 def _validate_move(to_col: str, current_totals: Counter) -> tuple[bool, str]:
@@ -76,7 +142,7 @@ def _validate_move(to_col: str, current_totals: Counter) -> tuple[bool, str]:
     return True, ""
 
 
-# --- Rendering -------------------------------------------------------------
+# --- Rendering (horizontal flex grid per lane) ----------------------------
 
 CUSTOM_CSS = """
 .sortable-component {
@@ -130,6 +196,19 @@ CUSTOM_CSS = """
 """
 
 
+def _wip_pill(col: str, count: int) -> str:
+    limit = COL_LIMITS[col]
+    if limit is None:
+        return f"{count}"
+    if count >= limit:
+        dot = "🔴"
+    elif count >= limit - 1 and limit >= 2:
+        dot = "🟠"
+    else:
+        dot = "🟢"
+    return f"{dot} {count}/{limit}"
+
+
 def render_add_card_form() -> None:
     with st.expander("➕ Add card", expanded=False):
         with st.form("add_card", clear_on_submit=True):
@@ -148,7 +227,6 @@ def render_add_card_form() -> None:
                 if not title.strip():
                     st.warning("Title required.")
                     return
-                # Pre-check Ready cap before inserting.
                 cards = storage.load_cards()
                 totals = _col_totals(cards)
                 ok, msg = _validate_move("ready", totals)
@@ -181,7 +259,6 @@ def render_board() -> None:
         lane_cards = [c for c in cards if c.lane == lane_id]
         id_lookup: dict[str, str] = {c.id[:8]: c.id for c in lane_cards}
 
-        # Build list[{'header': col_label, 'items': [item_strings]}].
         buckets_map: dict[str, list[str]] = {COL_LABELS[cid]: [] for cid in COL_IDS}
         for c in lane_cards:
             buckets_map[COL_LABELS[c.col]].append(_encode(c))
@@ -190,18 +267,17 @@ def render_board() -> None:
             for cid in COL_IDS
         ]
 
-        key = f"sortable_{lane_id}"
         result = sort_items(
             buckets,
             multi_containers=True,
             direction="horizontal",
             custom_style=CUSTOM_CSS,
-            key=key,
+            key=_lane_widget_key(lane_id, lane_cards),
         )
 
-        # Detect moves within this lane and persist. `result` has same shape.
+        # Detect moves within this lane and persist.
         label_to_col = {COL_LABELS[cid]: cid for cid in COL_IDS}
-        moves: list[tuple[str, str]] = []  # (card_id, new_col)
+        moves: list[tuple[str, str]] = []
         for bucket in result:
             new_col = label_to_col[bucket["header"]]
             for encoded in bucket["items"]:
@@ -215,14 +291,12 @@ def render_board() -> None:
                     moves.append((cid, new_col))
 
         if moves:
-            # Apply moves while tracking totals for WIP enforcement.
             live_totals = _col_totals(storage.load_cards())
             blocked: list[str] = []
             for cid, new_col in moves:
                 card = storage.get_card(cid)
                 if card is None:
                     continue
-                # Temporarily decrement old column
                 live_totals[card.col] -= 1
                 ok, msg = _validate_move(new_col, live_totals)
                 if not ok:
@@ -232,7 +306,6 @@ def render_board() -> None:
                 prev_col = card.col
                 storage.move_card(cid, new_col, lane_id)
                 live_totals[new_col] += 1
-                # Discord #done-log on Ready→Done (spec §5).
                 if prev_col == "ready" and new_col == "done":
                     discord.post(
                         "done-log",
@@ -267,8 +340,25 @@ def render_card_manager() -> None:
     card = storage.get_card(selected_id)
     if card is None:
         return
+    notes_text, source_name = _card_notes(card)
 
-    tab_edit, tab_detail = st.tabs(["Edit", "Detail"])
+    tab_detail, tab_edit, tab_discord = st.tabs(["Detail", "Edit", "Send to Discord"])
+
+    with tab_detail:
+        st.markdown("**Content**")
+        if source_name:
+            st.caption(f"Loaded from `{source_name}`")
+        if notes_text:
+            st.text_area(
+                "Content",
+                value=notes_text,
+                height=260,
+                disabled=True,
+                key=f"card_content_preview_{card.id}",
+                label_visibility="collapsed",
+            )
+        else:
+            st.caption("No note content stored for this card yet.")
 
     with tab_edit:
         with st.form(f"edit_{card.id}"):
@@ -284,12 +374,19 @@ def render_card_manager() -> None:
             new_effort = c4.selectbox(
                 "Effort", EFFORTS, index=EFFORTS.index(card.effort) if card.effort in EFFORTS else 0
             )
+            new_notes = st.text_area(
+                "Notes",
+                value=card.notes or notes_text,
+                height=180,
+                placeholder="Card notes or source text",
+            )
             save_col, delete_col = st.columns([1, 1])
             saved = save_col.form_submit_button("Save", use_container_width=True)
             deleted = delete_col.form_submit_button("🗑 Delete", use_container_width=True)
             if saved:
                 from .models import now_iso
                 card.title = new_title.strip() or card.title
+                card.notes = new_notes.strip()
                 card.lane = new_lane
                 card.tag = new_tag
                 card.effort = new_effort
@@ -302,89 +399,19 @@ def render_card_manager() -> None:
                 st.success(f"Deleted '{card.title}'.")
                 st.rerun()
 
-    with tab_detail:
+    with tab_discord:
         st.markdown(f"**{card.title}**")
-        st.caption(f"`{card.id}`")
-        meta_cols = st.columns(4)
-        meta_cols[0].metric("Lane", LANE_LABELS[card.lane])
-        meta_cols[1].metric("Column", COL_LABELS[card.col])
-        meta_cols[2].metric("Tag", card.tag)
-        meta_cols[3].metric("Effort", card.effort or "—")
-        st.caption(f"Created {card.created_at} · Updated {card.updated_at}")
-        if card.scheduled_at:
-            ev = f" · event `{card.calendar_event_id}`" if card.calendar_event_id else ""
-            st.caption(f"📅 Scheduled: {card.scheduled_at}{ev}")
-
-        # --- Schedule form (spec §6) ---
-        with st.expander("📅 Schedule", expanded=False):
-            import datetime as _dt
-            from .models import now_iso
-            default_date = _dt.date.today() + _dt.timedelta(days=1)
-            sc1, sc2, sc3 = st.columns([1, 1, 1])
-            sched_date = sc1.date_input("Date", value=default_date, key=f"sd_{card.id}")
-            sched_time = sc2.time_input("Time", value=_dt.time(9, 0), key=f"st_{card.id}")
-            sched_mins = sc3.number_input(
-                "Duration (min)",
-                min_value=15, max_value=240, step=15,
-                value=calendar_sync.effort_minutes(card.effort),
-                key=f"sm_{card.id}",
-            )
-            bcols = st.columns([1, 1, 1])
-            if bcols[0].button("📥 Export .ics", key=f"ics_{card.id}", use_container_width=True):
-                start = _dt.datetime.combine(sched_date, sched_time)
-                uid, path = calendar_sync.schedule_ics(card, start, int(sched_mins))
-                card.scheduled_at = start.isoformat(timespec="minutes")
-                card.calendar_event_id = uid
-                card.updated_at = now_iso()
-                storage.update_card(card)
-                st.success(f"Wrote `{path.relative_to(storage.ROOT)}`.")
-                with open(path, "rb") as fh:
-                    st.download_button(
-                        "⬇︎ Download .ics",
-                        fh.read(),
-                        file_name=path.name,
-                        mime="text/calendar",
-                        key=f"dl_{card.id}",
-                    )
-                st.rerun()
-            if bcols[1].button("📆 Google Calendar", key=f"gcal_{card.id}", use_container_width=True):
-                start = _dt.datetime.combine(sched_date, sched_time)
-                try:
-                    ev_id = calendar_sync.schedule_google(card, start, int(sched_mins))
-                except RuntimeError as e:
-                    st.error(str(e))
-                else:
-                    card.scheduled_at = start.isoformat(timespec="minutes")
-                    card.calendar_event_id = ev_id
-                    card.updated_at = now_iso()
-                    storage.update_card(card)
-                    st.success("Pushed to Google Calendar.")
-                    st.rerun()
-            if card.scheduled_at and bcols[2].button(
-                "✖ Clear schedule", key=f"clr_{card.id}", use_container_width=True
-            ):
-                card.scheduled_at = None
-                card.calendar_event_id = None
-                card.updated_at = now_iso()
-                storage.update_card(card)
-                st.rerun()
-
-        st.markdown("**Transition history**")
-        history = storage.card_history(card.id)
-        if not history:
-            st.caption("No events logged yet.")
-        else:
-            import pandas as pd
-            rows = [
-                {
-                    "ts": h["ts"],
-                    "lane": LANE_LABELS.get(h["lane"], h["lane"]),
-                    "from": COL_LABELS.get(h["from_col"], h["from_col"] or "—"),
-                    "to": COL_LABELS.get(h["to_col"], h["to_col"]),
-                }
-                for h in history
-            ]
-            st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+        info_cols = st.columns(4)
+        info_cols[0].caption(f"Lane: {LANE_LABELS[card.lane]}")
+        info_cols[1].caption(f"Column: {COL_LABELS[card.col]}")
+        info_cols[2].caption(f"Tag: {card.tag}")
+        info_cols[3].caption(f"Effort: {card.effort or '—'}")
+        if st.button("Send to Discord", key=f"notify_{card.id}", use_container_width=False):
+            sent, error = discord.post_card_result(card, notes_text, source_name)
+            if sent:
+                st.success("Card sent to Discord.")
+            else:
+                st.error(error or "Discord notification failed.")
 
 
 # --- AI staging view -------------------------------------------------------

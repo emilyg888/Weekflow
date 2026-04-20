@@ -13,7 +13,11 @@ from kanban import ai_parser, discord  # noqa: E402
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Parse backlog notes into staged cards.")
-    ap.add_argument("--no-llm", action="store_true", help="Force mock extractor (skip OpenAI).")
+    ap.add_argument(
+        "--no-llm",
+        action="store_true",
+        help="Force mock extractor (skip LM Studio/LLM).",
+    )
     ap.add_argument("--notify", action="store_true", help="Post to #backlog-bucket on success.")
     args = ap.parse_args()
 

@@ -35,44 +35,64 @@ def _run_capture(fn) -> tuple[int, str]:
 
 
 def render_operations() -> None:
-    st.caption("Manual triggers for the weekly + safety nets.")
+    with st.container(border=True):
+        action_cols = st.columns([1, 1, 2])
+        if action_cols[0].button(
+            "🌅 Run Sunday reset",
+            use_container_width=True,
+            type="primary",
+        ):
+            from scripts.sunday_reset import main as sunday_main
+            with st.spinner("Archiving Done · parsing backlog · writing reflect report…"):
+                code, log = _run_capture(sunday_main)
+            (st.success if code == 0 else st.error)(f"sunday_reset exited {code}")
+            st.code(log or "(no output)", language="text")
 
-    c1, c2, _ = st.columns([1, 1, 2])
-    if c1.button("🌅 Run Sunday reset", use_container_width=True):
-        from scripts.sunday_reset import main as sunday_main
-        with st.spinner("Archiving Done · parsing backlog · writing reflect report…"):
-            code, log = _run_capture(sunday_main)
-        (st.success if code == 0 else st.error)(
-            f"sunday_reset exited {code}"
-        )
-        st.code(log or "(no output)", language="text")
+        if action_cols[1].button(
+            "⏰ Check stale WIP",
+            use_container_width=True,
+            type="primary",
+        ):
+            from scripts.stale_wip_check import main as stale_main
+            with st.spinner("Scanning WIP cards…"):
+                code, log = _run_capture(stale_main)
+            (st.success if code == 0 else st.error)(f"stale_wip_check exited {code}")
+            st.code(log or "(no output)", language="text")
 
-    if c2.button("⏰ Check stale WIP", use_container_width=True):
-        from scripts.stale_wip_check import main as stale_main
-        with st.spinner("Scanning WIP cards…"):
-            code, log = _run_capture(stale_main)
-        (st.success if code == 0 else st.error)(
-            f"stale_wip_check exited {code}"
+        action_cols[2].markdown(
+            (
+                '<div style="text-align:right;line-height:1.1;">'
+                '<div style="font-size:0.8rem;color:#8B8A80;text-transform:uppercase;letter-spacing:0.08em;">'
+                "Today"
+                "</div>"
+                f'<div style="font-size:1.7rem;font-weight:700;color:#F2F1ED;">{_dt.date.today().isoformat()}</div>'
+                "</div>"
+            ),
+            unsafe_allow_html=True,
         )
-        st.code(log or "(no output)", language="text")
 
 
 def main() -> None:
-    st.set_page_config(page_title="Weekflow · Personal Kanban", layout="wide")
+    st.set_page_config(
+        page_title="Weekflow · Personal Kanban",
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
     storage.init_storage()
     st.title("Weekflow")
     st.caption("Capture → shape → execute → reflect → improve.")
-    tab_board, tab_cards, tab_staging, tab_ops = st.tabs(
+    tab_board, tab_cards, tab_staging, tab_operations = st.tabs(
         ["🗂 Board", "✏️ Cards", "🤖 AI Staging", "⚙️ Operations"]
     )
     with tab_board:
         render_add_card_form()
         render_board()
     with tab_cards:
+        st.subheader("Card detail & edit")
         render_card_manager()
     with tab_staging:
         render_staging_view()
-    with tab_ops:
+    with tab_operations:
         render_operations()
 
 

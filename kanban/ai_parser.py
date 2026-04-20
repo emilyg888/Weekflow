@@ -5,8 +5,8 @@ card candidates, writes:
   - /backlog/processed/task_candidates.json  — staging queue (flat list)
   - /backlog/ai_generated/tasks_YYYY-MM-DD.json — per-day snapshot
 
-Mock mode: if OPENAI_API_KEY is not set, falls back to a deterministic
-heuristic extractor so the pipeline is usable locally without credentials.
+Defaults to LM Studio's local OpenAI-compatible server and falls back to a deterministic heuristic
+extractor if the OpenAI SDK is unavailable or the LLM request fails.
 
 .mp3 (Whisper) and .png (vision) inputs are mentioned in the spec; implement
 extension hooks but keep the core parser text-only for now.
@@ -29,6 +29,10 @@ RAW_DIR = BACKLOG_DIR / "raw"
 PROCESSED_DIR = BACKLOG_DIR / "processed"
 AI_DIR = BACKLOG_DIR / "ai_generated"
 STAGING_FILE = PROCESSED_DIR / "task_candidates.json"
+DEFAULT_LLM_BASE_URL = "http://127.0.0.1:1234/v1"
+DEFAULT_LLM_MODEL = "Qwen/Qwen2.5-14B-Instruct"
+DEFAULT_LLM_API_KEY = "lm-studio"
+DEFAULT_LLM_TIMEOUT = 30.0
 
 SYSTEM_PROMPT = """You convert free-form backlog notes into structured kanban cards.
 For each distinct actionable intent in the input, output ONE card.
@@ -116,27 +120,62 @@ def _mock_extract(text: str) -> list[dict]:
     return cards
 
 
+def _llm_settings() -> dict[str, str | float]:
+    timeout = DEFAULT_LLM_TIMEOUT
+    raw_timeout = os.environ.get("WEEKFLOW_LLM_TIMEOUT", "").strip()
+    if raw_timeout:
+        try:
+            timeout = float(raw_timeout)
+        except ValueError:
+            timeout = DEFAULT_LLM_TIMEOUT
+    return {
+        "base_url": os.environ.get("WEEKFLOW_LLM_BASE_URL", DEFAULT_LLM_BASE_URL),
+        "model": os.environ.get("WEEKFLOW_LLM_MODEL", DEFAULT_LLM_MODEL),
+        "api_key": os.environ.get("WEEKFLOW_LLM_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+        or DEFAULT_LLM_API_KEY,
+        "timeout": timeout,
+    }
+
+
+def _extract_payload(text: str) -> dict:
+    text = text.strip()
+    if not text:
+        return {}
+    fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
+    candidate = fenced.group(1) if fenced else text
+    if not fenced:
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start != -1 and end != -1 and end >= start:
+            candidate = candidate[start : end + 1]
+    return json.loads(candidate)
+
+
 def _llm_extract(text: str) -> list[dict]:
     try:
         from openai import OpenAI  # type: ignore
     except ImportError:
         return _mock_extract(text)
-    if not os.environ.get("OPENAI_API_KEY"):
-        return _mock_extract(text)
-
-    client = OpenAI()
-    model = os.environ.get("WEEKFLOW_LLM_MODEL", "gpt-4o-mini")
+    settings = _llm_settings()
+    client = OpenAI(
+        base_url=str(settings["base_url"]),
+        api_key=str(settings["api_key"]),
+        timeout=float(settings["timeout"]),
+    )
     try:
         resp = client.chat.completions.create(
-            model=model,
-            response_format={"type": "json_object"},
+            model=str(settings["model"]),
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": text},
+                {
+                    "role": "user",
+                    "content": f"{text}\n\nReturn JSON only with top-level key \"cards\".",
+                },
             ],
             temperature=0.2,
         )
-        payload = json.loads(resp.choices[0].message.content or "{}")
+        payload = _extract_payload(resp.choices[0].message.content or "")
         cards = payload.get("cards", [])
         return cards if isinstance(cards, list) else []
     except Exception as e:  # noqa: BLE001 — fallback on any API/parse failure
@@ -151,7 +190,7 @@ def parse_all(use_llm: Optional[bool] = None) -> list[Candidate]:
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     AI_DIR.mkdir(parents=True, exist_ok=True)
 
-    extractor = _llm_extract if (use_llm if use_llm is not None else bool(os.environ.get("OPENAI_API_KEY"))) else _mock_extract
+    extractor = _llm_extract if (use_llm if use_llm is not None else True) else _mock_extract
 
     candidates: list[Candidate] = []
     for path, text in _read_raw_files():
