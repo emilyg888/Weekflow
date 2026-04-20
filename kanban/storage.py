@@ -22,7 +22,7 @@ from .models import Card, now_iso
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
-BACKLOG_DIR = ROOT / "backlog"
+BACKLOG_DIR = Path("/Users/emilygao/Documents/AI_Bucket/Backlog")
 CARDS_JSON = DATA_DIR / "cards.json"
 EVENTS_JSON = DATA_DIR / "events.json"
 DB_PATH = ROOT / "kanban.duckdb"
